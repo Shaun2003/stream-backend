@@ -96,11 +96,29 @@ function pickBestSupportedAudioFormat(formats) {
 const play = require('play-dl');
 const ytdl = require('@distube/ytdl-core');
 
+const extractWithYtDlp = (videoId) => new Promise((resolve, reject) => {
+  const cmd = `${PYTHON_BIN} -m yt_dlp --no-playlist --extractor-args "youtube:player_client=android" --user-agent "${YOUTUBE_USER_AGENT}" --referer "https://www.youtube.com/" -f "140/251/250/bestaudio/best" --get-url "https://www.youtube.com/watch?v=${videoId}"`;
+  exec(cmd, { timeout: 30000 }, (error, stdout, stderr) => {
+    if (error) return reject(new Error(stderr.trim() || error.message));
+    const url = stdout.trim().split(/\r?\n/).find(line => /^https?:\/\//i.test(line));
+    if (!url) return reject(new Error('No URL returned from yt-dlp'));
+    resolve(url);
+  });
+});
+
 // Helper to retrieve the raw URL
 const resolveAudioUrl = async (videoId, forceRefresh = false, retryWithSearch = false) => {
   const cachedEntry = forceRefresh ? null : getCached(videoId);
   if (cachedEntry) {
     return cachedEntry.url;
+  }
+
+  try {
+    const audioUrl = await extractWithYtDlp(videoId);
+    setCached(videoId, audioUrl);
+    return audioUrl;
+  } catch (ytDlpErr) {
+    console.warn(`[getAudioUrl] yt-dlp primary extraction failed for ${videoId}: ${ytDlpErr.message}`);
   }
 
   try {
@@ -125,15 +143,7 @@ const resolveAudioUrl = async (videoId, forceRefresh = false, retryWithSearch = 
 
     try {
       console.log(`[getAudioUrl] Falling back to yt-dlp for ${videoId}`);
-      const audioUrl = await new Promise((resolve, reject) => {
-        const cmd = `${PYTHON_BIN} -m yt_dlp --no-playlist --extractor-args "youtube:player_client=android" --user-agent "${YOUTUBE_USER_AGENT}" --referer "https://www.youtube.com/" -f "140/251/250/bestaudio/best" --get-url "https://www.youtube.com/watch?v=${videoId}"`;
-        require('child_process').exec(cmd, { timeout: 25000 }, (err2, stdout) => {
-          if (err2) return reject(err2);
-          const url = stdout.trim().split(/\r?\n/).find(line => /^https?:\/\//i.test(line));
-          if (!url) return reject(new Error('No URL returned from yt-dlp'));
-          resolve(url);
-        });
-      });
+      const audioUrl = await extractWithYtDlp(videoId);
 
       // Signed YouTube URLs commonly reject probe requests even though the
       // media is playable when requested with the correct YouTube headers.
