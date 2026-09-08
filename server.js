@@ -96,15 +96,31 @@ function pickBestSupportedAudioFormat(formats) {
 const play = require('play-dl');
 const ytdl = require('@distube/ytdl-core');
 
-const extractWithYtDlp = (videoId) => new Promise((resolve, reject) => {
-  const cmd = `${PYTHON_BIN} -m yt_dlp --no-playlist --extractor-args "youtube:player_client=android" --user-agent "${YOUTUBE_USER_AGENT}" --referer "https://www.youtube.com/" -f "140/251/250/bestaudio/best" --get-url "https://www.youtube.com/watch?v=${videoId}"`;
-  exec(cmd, { timeout: 30000 }, (error, stdout, stderr) => {
-    if (error) return reject(new Error(stderr.trim() || error.message));
-    const url = stdout.trim().split(/\r?\n/).find(line => /^https?:\/\//i.test(line));
-    if (!url) return reject(new Error('No URL returned from yt-dlp'));
-    resolve(url);
-  });
-});
+const extractWithYtDlp = async (videoId) => {
+  const clients = ['android_vr', 'android'];
+  let lastError = new Error('No URL returned from yt-dlp');
+
+  for (const client of clients) {
+    try {
+      const url = await new Promise((resolve, reject) => {
+        const cmd = `${PYTHON_BIN} -m yt_dlp --no-playlist --extractor-args "youtube:player_client=${client}" --user-agent "${YOUTUBE_USER_AGENT}" --referer "https://www.youtube.com/" -f "140/251/250/bestaudio/best" --get-url "https://www.youtube.com/watch?v=${videoId}"`;
+        exec(cmd, { timeout: 30000 }, (error, stdout, stderr) => {
+          if (error) return reject(new Error(stderr.trim() || error.message));
+          const mediaUrl = stdout.trim().split(/\r?\n/).find(line => /^https?:\/\//i.test(line));
+          if (!mediaUrl) return reject(new Error('No URL returned from yt-dlp'));
+          resolve(mediaUrl);
+        });
+      });
+      console.log(`[yt-dlp] ${client} extraction succeeded for ${videoId}`);
+      return url;
+    } catch (error) {
+      lastError = error;
+      console.warn(`[yt-dlp] ${client} extraction failed for ${videoId}: ${error.message}`);
+    }
+  }
+
+  throw lastError;
+};
 
 // Helper to retrieve the raw URL
 const resolveAudioUrl = async (videoId, forceRefresh = false, retryWithSearch = false) => {
