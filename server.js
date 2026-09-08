@@ -104,7 +104,7 @@ const extractWithYtDlp = async (videoId) => {
     try {
       const url = await new Promise((resolve, reject) => {
         const cmd = `${PYTHON_BIN} -m yt_dlp --no-playlist --extractor-args "youtube:player_client=${client}" --user-agent "${YOUTUBE_USER_AGENT}" --referer "https://www.youtube.com/" -f "140/251/250/bestaudio/best" --get-url "https://www.youtube.com/watch?v=${videoId}"`;
-        exec(cmd, { timeout: 30000 }, (error, stdout, stderr) => {
+        exec(cmd, { timeout: 15000 }, (error, stdout, stderr) => {
           if (error) return reject(new Error(stderr.trim() || error.message));
           const mediaUrl = stdout.trim().split(/\r?\n/).find(line => /^https?:\/\//i.test(line));
           if (!mediaUrl) return reject(new Error('No URL returned from yt-dlp'));
@@ -137,62 +137,7 @@ const resolveAudioUrl = async (videoId, forceRefresh = false, retryWithSearch = 
     console.warn(`[getAudioUrl] yt-dlp primary extraction failed for ${videoId}: ${ytDlpErr.message}`);
   }
 
-  try {
-    const info = await withTimeout(
-      play.video_info(`https://www.youtube.com/watch?v=${videoId}`),
-      20000,
-      'play-dl timed out while extracting audio'
-    );
-    const formats = Array.isArray(info && info.format) ? info.format : [];
-    const format = pickBestSupportedAudioFormat(formats);
-
-    if (!format || !format.url) throw new Error('No audio format found from play-dl');
-
-    if (!(await validateAudioUrl(format.url))) {
-      throw new Error('play-dl returned unsupported media URL');
-    }
-
-    setCached(videoId, format.url);
-    return format.url;
-  } catch (err) {
-    console.warn(`[getAudioUrl] play-dl failed for ${videoId}: ${err.message}`);
-
-    try {
-      console.log(`[getAudioUrl] Falling back to yt-dlp for ${videoId}`);
-      const audioUrl = await extractWithYtDlp(videoId);
-
-      // Signed YouTube URLs commonly reject probe requests even though the
-      // media is playable when requested with the correct YouTube headers.
-      setCached(videoId, audioUrl);
-      return audioUrl;
-    } catch (ytDlpErr) {
-      console.warn(`[getAudioUrl] yt-dlp failed for ${videoId}: ${ytDlpErr.message}`);
-
-      try {
-        console.log(`[getAudioUrl] Falling back to ytdl-core for ${videoId}`);
-        const info = await ytdl.getInfo(`https://www.youtube.com/watch?v=${videoId}`);
-        const format = pickBestSupportedAudioFormat(info.formats);
-
-        if (!format || !format.url) throw new Error('No audio format found from ytdl-core');
-        if (!(await validateAudioUrl(format.url))) {
-          throw new Error('ytdl-core returned unsupported media URL');
-        }
-        setCached(videoId, format.url);
-        return format.url;
-      } catch (ytdlErr) {
-        console.error(`[getAudioUrl] ytdl-core failed for ${videoId}: ${ytdlErr.message}`);
-        if (retryWithSearch) {
-          try {
-            const ytSearch = require('yt-search');
-            throw ytdlErr;
-          } catch (e) {
-            throw ytdlErr;
-          }
-        }
-        throw ytdlErr;
-      }
-    }
-  }
+  throw new Error(`No playable YouTube media URL available for ${videoId}`);
 };
 
 const getAudioUrl = (videoId, forceRefresh = false, retryWithSearch = false) => {
