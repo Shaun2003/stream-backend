@@ -26,6 +26,21 @@ const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 const YOUTUBE_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 const AUDIO_CACHE_DIR = path.join(__dirname, '.audio-cache');
 const PYTHON_BIN = process.platform === 'win32' ? 'python' : 'python3';
+const UPSTREAM_TIMEOUT_MS = 45000;
+
+function fetchWithTimeout(url, options = {}, timeoutMs = UPSTREAM_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timeout));
+}
+
+function withTimeout(promise, timeoutMs, message) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
 
 function getCached(videoId) {
   const entry = cache.get(videoId);
@@ -89,7 +104,11 @@ const resolveAudioUrl = async (videoId, forceRefresh = false, retryWithSearch = 
   }
 
   try {
-    const info = await play.video_info(`https://www.youtube.com/watch?v=${videoId}`);
+    const info = await withTimeout(
+      play.video_info(`https://www.youtube.com/watch?v=${videoId}`),
+      20000,
+      'play-dl timed out while extracting audio'
+    );
     const formats = Array.isArray(info && info.format) ? info.format : [];
     const format = pickBestSupportedAudioFormat(formats);
 
@@ -190,7 +209,7 @@ async function ensureCachedAudioFile(videoId) {
     await fs.promises.rm(tempPath, { force: true });
 
     const rawUrl = await getAudioUrl(videoId, true);
-    const response = await fetch(rawUrl, {
+    const response = await fetchWithTimeout(rawUrl, {
       headers: {
         'User-Agent': YOUTUBE_USER_AGENT,
         'Referer': 'https://www.youtube.com/',
@@ -307,7 +326,7 @@ app.get('/api/stream/:videoId', async (req, res) => {
       headers['Range'] = req.headers.range;
     }
     
-    let response = await fetch(rawUrl, { headers, redirect: 'follow' });
+    let response = await fetchWithTimeout(rawUrl, { headers, redirect: 'follow' });
     
     // Auto-refresh the URL if YouTube returns 403 Forbidden or 410 Gone
     if (!response.ok && (response.status === 403 || response.status === 410 || response.status === 400)) {
@@ -315,7 +334,7 @@ app.get('/api/stream/:videoId', async (req, res) => {
        cache.delete(videoId); // Invalidate cached URL
        rawUrl = await getAudioUrl(videoId, true); // Force fetch new URL
        response.body?.destroy();
-       response = await fetch(rawUrl, { headers, redirect: 'follow' });
+      response = await fetchWithTimeout(rawUrl, { headers, redirect: 'follow' });
     }
 
      if (!response.ok) {
