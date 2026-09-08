@@ -61,7 +61,7 @@ async function validateAudioUrl(url) {
   }
 
   try {
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       method: 'GET',
       headers: {
         'User-Agent': YOUTUBE_USER_AGENT,
@@ -70,7 +70,7 @@ async function validateAudioUrl(url) {
         'Accept-Encoding': 'identity',
         Range: 'bytes=0-32767',
       },
-    });
+    }, 20000);
 
     const contentType = (response.headers && response.headers.get && response.headers.get('content-type')) || '';
     const accepted = /audio\//i.test(contentType) || /video\/mp4/i.test(contentType) || /audio/i.test(contentType);
